@@ -161,13 +161,13 @@ Chat histories are saved locally to `user_chat_histories/user_<uuid>.json`.
 
 | Layer | Technology |
 |---|---|
-| Chatbot LLM | Google Gemini 1.5 Flash (via LangChain) |
+| Chatbot LLM | Google Gemini 2.5 Flash (via LangChain) |
 | Emotion model | `SamLowe/roberta-base-go_emotions` (HuggingFace) |
 | Crisis model | `distilbert-base-uncased-finetuned-sst-2-english` |
 | Chatbot framework | LangChain, LangChain-Google-GenAI |
 | Frontend | React Native |
-| Backend | Node.js / FastAPI |
-| Database | MongoDB / Firebase |
+| Chatbot Backend | Flask |
+| Database | MongoDB |
 
 
 ---
