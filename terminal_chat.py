@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
-from pymongo import MongoClient # <-- ADDED: Import the MongoDB client
+from pymongo import MongoClient 
 
 # Suppress PyTorch deprecation warnings
 warnings.filterwarnings(
@@ -32,16 +32,13 @@ warnings.filterwarnings("ignore", category=UserWarning, module="langchain")
 # Load environment variables
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GOOGLE_API_KEY')
-MONGO_CONNECTION_STRING = os.getenv('MONGO_CONNECTION_STRING') # <-- ADDED: Get MongoDB connection string
+MONGO_CONNECTION_STRING = os.getenv('MONGO_CONNECTION_STRING') 
 
 if not GEMINI_API_KEY:
     raise ValueError("GOOGLE_API_KEY is not found in .env")
-if not MONGO_CONNECTION_STRING: # <-- ADDED: Check for the connection string
+if not MONGO_CONNECTION_STRING: 
     raise ValueError("MONGO_CONNECTION_STRING is not found in .env")
 
-# --- REMOVED: These are no longer needed as we are using MongoDB ---
-# CHAT_HISTORY_DIR = Path("user_chat_histories")
-# CHAT_HISTORY_DIR.mkdir(exist_ok=True)
 
 # System prompt for mental health counselor with enhanced empathy and personalization
 SYSTEM_PROMPT = """You are Aanya, a warm and empathetic mental health counselor specializing in supporting Indian students. Your approach combines professional expertise with a caring, sisterly tone that makes users feel understood and supported.
@@ -111,30 +108,12 @@ Use this information to:
 - End with an open-ended question to continue the dialogue
 - For crisis situations, prioritize safety and provide immediate resources"""
 
-def get_conversation_context(chat_history, max_messages=5):
-    """Extract key context from recent chat history."""
-    if not chat_history or len(chat_history) == 0:
-        return "No previous conversation context available."
-    
-    # Get most recent messages
-    recent_messages = chat_history[-max_messages:]
-    context = []
-    
-    for msg in recent_messages:
-        role = "You" if msg['role'] == 'user' else "Aanya"
-        context.append(f"{role}: {msg['content']}")
-        
-        # Add emotion info if available
-        if 'dominant_emotion' in msg and role == "You":
-            context[-1] += f" [Felt: {msg['dominant_emotion']}]"
-    
-    return "\n".join(["Recent conversation:"] + context[-5:])
 
 class UserChatManager:
     def __init__(self):
         """Initialize the chat manager with LLM, crisis detector, and conversation handlers."""
         self.llm = ChatGoogleGenerativeAI(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             temperature=0.7,
             api_key=GEMINI_API_KEY
         )
@@ -241,6 +220,14 @@ class UserChatManager:
             return False
             
         self.current_user = user_data
+
+        # Ensure needs_follow_up flag is preserved across sessions
+        if 'needs_follow_up' not in self.current_user:
+            self.current_user['needs_follow_up'] = False
+    
+        # Ensure crisis flag is preserved across sessions
+        if 'had_crisis_before' not in self.current_user:
+            self.current_user['had_crisis_before'] = False
         
         # Create or get message history for this user
         if user_id not in self.histories:
@@ -337,37 +324,6 @@ class UserChatManager:
             'total_messages_analyzed': len(history)
         }
 
-    def _get_emotional_context(self, user_id: str) -> str:
-        """Generate context about user's emotional state for the AI."""
-        if not hasattr(self, 'emotion_history') or not emotion_detector.emotion_history.get(user_id):
-            return ""
-            
-        # Get recent emotions (last 5 messages)
-        recent_emotions = emotion_detector.emotion_history[user_id][-5:]
-        if not recent_emotions:
-            return ""
-            
-        # Count occurrences of each emotion
-        emotion_counts = {}
-        for entry in recent_emotions:
-            emotion = entry.get('dominant_emotion', 'neutral')
-            emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
-            
-        # Generate context string
-        context_parts = ["Recent emotional patterns:"]
-        for emotion, count in emotion_counts.items():
-            context_parts.append(f"- {emotion.capitalize()}: {count} time{'s' if count > 1 else ''}")
-            
-        return "\n".join(context_parts)
-
-    def _detect_crisis_keywords(self, text: str) -> bool:
-        """Check for crisis-related keywords in the text."""
-        crisis_keywords = [
-            'suicide', 'end my life', 'kill myself', 'want to die',
-            'no reason to live', 'self harm', 'hurting myself',
-            "can't take it", 'giving up', 'hopeless', 'helpless'
-        ]
-        return any(keyword in text.lower() for keyword in crisis_keywords)
 
     def _get_conversation_context(self, user_id: str) -> str:
         """
@@ -451,7 +407,7 @@ class UserChatManager:
                 context_parts.append(f"{role}: {msg['content']}{emotion_info}")
         
         # 3. Previous Concerns or Issues
-        if self.current_user.get('needs_follow_up', False):
+        if self.current_user.get('had_crisis_before', False):
             context_parts.append(
                 "\n[IMPORTANT] This user was previously in crisis and may need follow-up care. "
                 "Be especially attentive to their emotional state and needs."
@@ -532,9 +488,9 @@ class UserChatManager:
                 response_text = crisis_response
                 
                 # Set a flag for follow-up in future sessions
-                self.current_user['needs_follow_up'] = True
+               self.current_user['had_crisis_before'] = True
                 
-            elif crisis_result['risk_level'] == 'medium':
+            elif crisis_result.get('is_warning', False):
                 # For medium risk, show concern and offer resources
                 response_text = (
                     "🤗 I hear how much you're struggling right now, and I want you to know I'm here for you.\n\n"
@@ -555,9 +511,104 @@ class UserChatManager:
             return "I'm sorry, I'm having trouble processing that right now. Could you try again?"
 
 # --- This part is for running the chatbot in the terminal, it's not used by the API ---
+def clear_screen():
+    """Clear the terminal screen"""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def print_header():
+    """Print the application header"""
+    clear_screen()
+    print("\n" + "="*50)
+    print("Welcome to Mental Health Chatbot".center(50))
+    print("Type 'exit' to quit".center(50))
+    print("="*50 + "\n")
+
 def main():
     chat_manager = UserChatManager()
-    # ... (rest of the main function remains the same)
+    print_header()
+
+    # Main menu loop
+    while True:
+        print("\nAre you a new or existing user?")
+        print("1. New User")
+        print("2. Existing User")
+        print("3. Exit")
+        choice = input("\nEnter your choice (1-3): ").strip()
+
+        if choice == '1':
+            # New User - using the updated method
+            user_id = str(uuid.uuid4())
+            chat_manager.get_or_create_user(user_id)
+            print(f"\nWelcome! Your User ID is: {user_id}")
+            print("Please save this ID for future reference.")
+            if chat_manager.initialize_conversation(user_id):
+                break
+
+        elif choice == '2':
+            # Existing User
+            user_id = input("\nEnter your User ID: ").strip()
+            if chat_manager.initialize_conversation(user_id):
+                print(f"\nWelcome back, User {user_id}!")
+                break
+            else:
+                print("User not found in MongoDB. Please try again or create a new user.")
+
+        elif choice == '3':
+            print("\nGoodbye!")
+            return
+        else:
+            print("Invalid choice. Please try again.")
+
+    # Main chat loop
+    print("\nChat started. Type 'exit' to end the session.\n")
+    try:
+        while True:
+            try:
+                # Get user input
+                user_input = input("You: ").strip()
+                
+                if user_input.lower() == 'exit':
+                    if chat_manager.current_user:
+                        try:
+                            print("\nEmotion Summary:")
+                            summary = chat_manager.get_emotion_summary(chat_manager.current_user['user_id'])
+                            if 'emotion_summary' in summary:
+                                for emotion, score in summary['emotion_summary'].items():
+                                    print(f"{emotion.capitalize()}: {score}")
+                                print(f"\nDominant emotion: {summary.get('dominant_emotion', 'N/A')}")
+                        except Exception as e:
+                            print(f"\nCouldn't generate emotion summary: {str(e)}")
+                    print("\nSaving your chat history to MongoDB. Goodbye!")
+                    break
+                
+                if user_input.lower() == 'emotions':
+                    if chat_manager.current_user:
+                        summary = chat_manager.get_emotion_summary(chat_manager.current_user['user_id'])
+                        print("\nEmotion Analysis:")
+                        for emotion, score in summary.get('emotion_summary', {}).items():
+                            print(f"{emotion.capitalize()}: {score}")
+                        print(f"\nDominant emotion: {summary.get('dominant_emotion', 'N/A')}")
+                    continue
+
+                # Get response from the AI model with emotional intelligence
+                response = chat_manager.get_response(user_input)
+                print(f"\nAssistant: {response}\n")
+
+            except KeyboardInterrupt:
+                # Allow Ctrl+C to exit cleanly
+                raise
+            except Exception as e:
+                print(f"\nSorry, I encountered an error: {str(e)}")
+                print("Please try again or type 'exit' to quit.\n")
+
+    except KeyboardInterrupt:
+        print("\n\nSession interrupted. Saving your chat history...")
+    finally:
+        if chat_manager.current_user:
+            chat_manager.save_user_history(
+                chat_manager.current_user['user_id'],
+                chat_manager.current_user
+            )
 
 if __name__ == "__main__":
     main()
